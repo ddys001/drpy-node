@@ -56,7 +56,7 @@ var rule = {
             let list = input.split('@');
             // log(list);
             for (let i = 0; i < list.length; i++) {
-                if (/pan.quark.cn|drive.uc.cn|www.alipan.com|www.aliyundrive.com|cloud.189.cn|yun.139.com/.test(list[i])) {
+                if (/pan.quark.cn|drive.uc.cn|www.alipan.com|www.aliyundrive.com|cloud.189.cn|yun.139.com|www.123684.com/.test(list[i])) {
                     if (/pan.quark.cn/.test(list[i])) {
                         playPans.push(list[i]);
                         const shareData = Quark.getShareData(list[i]);
@@ -127,12 +127,24 @@ var rule = {
                             playurls.push(urls);
                         })
                     }
+
+                    if(/www.123684.com/.test(list[i])) {
+                        playPans.push(list[i]);
+                        let shareData = Pan.getShareData(list[i])
+                        let videos = await Pan.getFilesByShareUrl(shareData)
+                        if (videos.length > 0) {
+                            playform.push('Pan123-' + shareData);
+                            const urls = videos.map(item => item.FileName + "$" + [item.ShareKey, item.FileId, item.S3KeyFlag, item.Size, item.Etag].join('*')).join('#');
+                            playurls.push(urls);
+                        }
+                    }
+
                 } else {
                     playform.push('推送');
                     playurls.push("推送" + '$' + list[i])
                 }
             }
-        } else if (/pan.quark.cn|drive.uc.cn|www.alipan.com|www.aliyundrive.com|cloud.189.cn|yun.139.com/.test(input)) {
+        } else if (/pan.quark.cn|drive.uc.cn|www.alipan.com|www.aliyundrive.com|cloud.189.cn|yun.139.com|www.123684.com/.test(input)) {
             if (/pan.quark.cn/.test(input)) {
                 playPans.push(input);
                 const shareData = Quark.getShareData(input);
@@ -172,7 +184,6 @@ var rule = {
                 const shareData = Ali.getShareData(input);
                 if (shareData) {
                     const videos = await Ali.getFilesByShareUrl(shareData);
-                    log(videos);
                     if (videos.length > 0) {
                         playform.push('Ali-' + shareData.shareId);
                         playurls.push(videos.map((v) => {
@@ -203,6 +214,17 @@ var rule = {
                     playurls.push(urls);
                 })
             }
+
+            if(/www.123684.com/.test(input)) {
+                playPans.push(input);
+                let shareData = Pan.getShareData(input)
+                let videos = await Pan.getFilesByShareUrl(shareData)
+                if (videos.length > 0) {
+                    playform.push('Pan123-' + shareData);
+                    const urls = videos.map(item => item.FileName + "$" + [item.ShareKey, item.FileId, item.S3KeyFlag, item.Size, item.Etag].join('*')).join('#');
+                    playurls.push(urls);
+                }
+            }
         } else {
             playform.push('推送');
             playurls.push("推送" + '$' + input)
@@ -222,7 +244,7 @@ var rule = {
             } else {
                 return {parse: 1, url: input}
             }
-        } else if (/Quark-|UC-|Ali-|Cloud-|Yun-/.test(flag)) {
+        } else if (/Quark-|UC-|Ali-|Cloud-|Yun-|Pan123-/.test(flag)) {
             const ids = input.split('*');
             const urls = [];
             let UCDownloadingCache = {};
@@ -254,30 +276,13 @@ var rule = {
                 }
             }
             if (flag.startsWith('UC-')) {
-                log("UC网盘解析开始")
+                console.log("UC网盘解析开始");
                 if (!UCDownloadingCache[ids[1]]) {
                     const down = await UC.getDownload(ids[0], ids[1], ids[2], ids[3], true);
                     if (down) UCDownloadingCache[ids[1]] = down;
                 }
-                downUrl = UCDownloadingCache[ids[1]].download_url;
-                const headers = {
-                    "Referer": "https://drive.uc.cn/",
-                    "cookie": UC.cookie,
-                    "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch'
-                };
-                urls.push("UC原画", downUrl);
-
-                urls.push("原代服", mediaProxyUrl + `?thread=${ENV.get('thread') || 6}&form=urlcode&randUa=1&url=` + encodeURIComponent(downUrl) + '&header=' + encodeURIComponent(JSON.stringify(headers)));
-                if (ENV.get('play_local_proxy_type', '1') === '2') {
-                    urls.push("原代本", `http://127.0.0.1:7777/?thread=${ENV.get('thread') || 6}&form=urlcode&randUa=1&url=` + encodeURIComponent(downUrl) + '&header=' + encodeURIComponent(JSON.stringify(headers)));
-                } else {
-                    urls.push("原代本", `http://127.0.0.1:5575/proxy?thread=${ENV.get('thread') || 6}&chunkSize=256&url=` + encodeURIComponent(downUrl));
-                }
-                return {
-                    parse: 0,
-                    url: urls,
-                    header: headers,
-                }
+                const downCache = UCDownloadingCache[ids[1]];
+                return await UC.getLazyResult(downCache, mediaProxyUrl)
             }
             if (flag.startsWith('Ali-')) {
                 const transcoding_flag = {
@@ -319,6 +324,23 @@ var rule = {
                 const url = await Yun.getSharePlay(ids[0], ids[1])
                 return {
                     url: url
+                }
+            }
+            if(flag.startsWith('Pan123-')) {
+                log('盘123解析开始')
+                const url = await Pan.getDownload(ids[0], ids[1], ids[2], ids[3], ids[4])
+                urls.push("原画", url + "#isVideo=true#")
+                log('jj:',url)
+                let data = await Pan.getLiveTranscoding(ids[0], ids[1], ids[2], ids[3], ids[4])
+                data.forEach((item) => {
+                    urls.push(item.name, item.url)
+                })
+                return {
+                    parse: 0,
+                    url: urls,
+                    header: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    }
                 }
             }
         } else {
